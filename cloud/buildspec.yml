@@ -74,7 +74,9 @@ phases:
     commands:
       - 'set -euo pipefail'
       - 'docker push "${REPOSITORY_URI}:${TAG}"'
+      - 'kubectl create secret generic simple-jwt-api-secrets --from-literal=JWT_SECRET="$JWT_SECRET" --dry-run=client -o yaml | kubectl apply -f -'
       - 'kubectl apply -f cloud/deployment.yml'
+      - 'kubectl rollout restart deployment/simple-jwt-api'
       - 'kubectl rollout status deployment/simple-jwt-api --timeout=300s'
       - 'printf ''[{"name":"simple-jwt-api","imageUri":"%s"}]'' "${REPOSITORY_URI}:${TAG}" > build.json'
 

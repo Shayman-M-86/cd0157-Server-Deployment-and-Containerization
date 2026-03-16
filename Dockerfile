@@ -1,7 +1,7 @@
 # Build command:
 #   docker build -f Docker/Dockerfile -t kubernetes-testing:latest .
 
-FROM python:3.14-slim-trixie
+FROM python:3.8-stretch
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -24,4 +24,4 @@ RUN uv sync --frozen --no-dev
 
 EXPOSE 8080
 
-CMD ["bash", "scripts/run.sh"]
+CMD ["uv", "run", "gunicorn", "-b", "0.0.0.0:8080", "main:APP"]

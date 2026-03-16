@@ -26,4 +26,10 @@ spec:
             readOnlyRootFilesystem: false
             allowPrivilegeEscalation: false
           ports:
-            - containerPort: 8080
+                - containerPort: 8080
+          env:
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: simple-jwt-api-secrets
+                  key: JWT_SECRET
