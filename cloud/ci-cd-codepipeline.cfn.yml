@@ -3,12 +3,10 @@ AWSTemplateFormatVersion: 2010-09-09
 
 Description: EKSWSV1
 
-
 Parameters:
-
   EksClusterName:
     Type: String
-    Description: The name of the EKS cluster created
+    Description: TODO - The name of the EKS cluster created
     Default: simple-jwt-api
     MinLength: 1
     MaxLength: 100
@@ -16,7 +14,7 @@ Parameters:
 
   GitSourceRepo:
     Type: String
-    Description: GitHub source repository - must contain a Dockerfile and buildspec.yml in the base
+    Description: TODO - GitHub source repository - must contain a Dockerfile and buildspec.yml in the base
     Default: cd0157-Server-Deployment-and-Containerization
     MinLength: 1
     MaxLength: 100
@@ -24,8 +22,8 @@ Parameters:
 
   GitBranch:
     Type: String
-    Default: master
-    Description: GitHub git repository branch - change triggers a new build
+    Default: main
+    Description: TODO - GitHub git repository branch - change triggers a new build
     MinLength: 1
     MaxLength: 100
     ConstraintDescription: You must enter a GitHub repository branch name
@@ -33,22 +31,22 @@ Parameters:
   GitHubToken:
     Type: String
     NoEcho: true
-    Description: GitHub API token - see https://github.com/blog/1509-personal-api-tokens
+    Description: TODO - GitHub API token - see https://github.com/blog/1509-personal-api-tokens
     MinLength: 3
     MaxLength: 100
     ConstraintDescription: You must enter a GitHub personal access token
 
   GitHubUser:
     Type: String
-    Default: SudKul
-    Description: GitHub username or organization
+    Default: Shayman-M-86
+    Description: TODO - GitHub username or organization
     MinLength: 3
     MaxLength: 100
     ConstraintDescription: You must enter a GitHub username or organization
 
   CodeBuildDockerImage:
     Type: String
-    Default: aws/codebuild/standard:4.0
+    Default: aws/codebuild/amazonlinux-x86_64-standard:5.0
     Description: AWS CodeBuild Docker optimized image
     MinLength: 3
     MaxLength: 100
@@ -57,11 +55,10 @@ Parameters:
   KubectlRoleName:
     Type: String
     Default: UdacityFlaskDeployCBKubectlRole
-    Description: IAM role used by kubectl to interact with EKS cluster
+    Description: TODO - IAM role used by kubectl to interact with EKS cluster
     MinLength: 3
     MaxLength: 100
     ConstraintDescription: You must enter a kubectl IAM role
-
 
 Metadata:
   AWS::CloudFormation::Interface:
@@ -101,16 +98,16 @@ Metadata:
       EksClusterName:
         default: EKS cluster name
 
-
 Resources:
-
   EcrDockerRepository:
     Type: AWS::ECR::Repository
     DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
 
   CodePipelineArtifactBucket:
     Type: AWS::S3::Bucket
     DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
 
   CustomResourceLambda:
     Type: AWS::Lambda::Function
@@ -118,55 +115,162 @@ Resources:
       Code:
         ZipFile: |
           import json
+          import logging
           import boto3
           import urllib3
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          iam = boto3.client("iam")
+          http = urllib3.PoolManager()
+
+          def send_cfn_response(event, context, status, data=None, reason=None, physical_resource_id=None):
+              response_body = {
+                  "Status": status,
+                  "Reason": reason or f"See details in CloudWatch Log Stream: {context.log_stream_name}",
+                  "PhysicalResourceId": physical_resource_id or context.log_stream_name,
+                  "StackId": event["StackId"],
+                  "RequestId": event["RequestId"],
+                  "LogicalResourceId": event["LogicalResourceId"],
+                  "Data": data or {},
+              }
+
+              encoded_body = json.dumps(response_body).encode("utf-8")
+              headers = {
+                  "content-type": "",
+                  "content-length": str(len(encoded_body)),
+              }
+
+              logger.info("Sending CloudFormation response: %s", response_body)
+
+              http.request(
+                  "PUT",
+                  event["ResponseURL"],
+                  body=encoded_body,
+                  headers=headers,
+              )
+
+          def update_kubectl_role_trust(kubectl_role_name, codebuild_service_role_arn):
+              assume = iam.get_role(RoleName=kubectl_role_name)
+              assume_doc = assume["Role"]["AssumeRolePolicyDocument"]
+
+              existing_statements = assume_doc.get("Statement", [])
+              new_statements = []
+
+              codebuild_statement = {
+                  "Effect": "Allow",
+                  "Principal": {"AWS": codebuild_service_role_arn},
+                  "Action": "sts:AssumeRole",
+              }
+              new_statements.append(codebuild_statement)
+
+              for statement in existing_statements:
+                  principal = statement.get("Principal", {})
+                  aws_principal = principal.get("AWS")
+
+                  if isinstance(aws_principal, str):
+                      if (
+                          aws_principal.startswith("arn:aws:iam:")
+                          and aws_principal != codebuild_service_role_arn
+                      ):
+                          new_statements.append(statement)
+
+                  elif isinstance(aws_principal, list):
+                      filtered = [
+                          arn
+                          for arn in aws_principal
+                          if arn.startswith("arn:aws:iam:") and arn != codebuild_service_role_arn
+                      ]
+                      if filtered:
+                          copied = dict(statement)
+                          copied["Principal"] = dict(principal)
+                          copied["Principal"]["AWS"] = filtered
+                          new_statements.append(copied)
+
+              assume_doc["Statement"] = new_statements
+
+              logger.info("Updating trust policy for role %s", kubectl_role_name)
+              iam.update_assume_role_policy(
+                  RoleName=kubectl_role_name,
+                  PolicyDocument=json.dumps(assume_doc),
+              )
+
+              return {
+                  "Message": "Kubectl role trust policy updated successfully.",
+                  "KubectlRoleName": kubectl_role_name,
+                  "CodeBuildServiceRoleArn": codebuild_service_role_arn,
+              }
+
           def handler(event, context):
-            response = {
-              'Status': 'SUCCESS',
-              "Reason": "See the details in CloudWatch Log Stream: " + context.log_stream_name,
-              'PhysicalResourceId': context.log_stream_name,
-              'StackId': event['StackId'],
-              'RequestId': event['RequestId'],
-              'LogicalResourceId': event['LogicalResourceId'],
-              'Data': {"Message": "Resource creation successful!"},
-            }
-          
-            http = urllib3.PoolManager()
-            client = boto3.client('iam')
-            try:
-              if event['RequestType'] == 'Create':
-                kubectl_role_name = event['ResourceProperties']['KubectlRoleName']
-                build_role_arn = event['ResourceProperties']['CodeBuildServiceRoleArn']
+              logger.info("Received event: %s", json.dumps(event))
 
-                assume = client.get_role(RoleName = kubectl_role_name)
-                assume_doc = assume['Role']['AssumeRolePolicyDocument']
-                roles = [ { 'Effect': 'Allow', 'Principal': { 'AWS': build_role_arn }, 'Action': 'sts:AssumeRole' } ]
+              request_type = event.get("RequestType", "")
+              physical_resource_id = event.get("PhysicalResourceId") or context.log_stream_name
 
-                for statement in assume_doc['Statement']:
-                  if 'AWS' in statement['Principal']:
-                    if statement['Principal']['AWS'].startswith('arn:aws:iam:'):
-                      roles.append(statement)
+              try:
+                  resource_properties = event.get("ResourceProperties", {})
+                  kubectl_role_name = resource_properties.get("KubectlRoleName")
+                  codebuild_service_role_arn = resource_properties.get("CodeBuildServiceRoleArn")
 
-                assume_doc['Statement'] = roles
-                update_response = client.update_assume_role_policy(RoleName = kubectl_role_name, PolicyDocument = json.dumps(assume_doc))
-            except Exception as e:
-              print(e)
-              response['Status'] = 'FAILED'
-              response["Reason"] = e
-              response['Data'] = {"Message": "Resource creation failed"}
+                  if request_type in ("Create", "Update"):
+                      if not kubectl_role_name or not codebuild_service_role_arn:
+                          raise ValueError("Both KubectlRoleName and CodeBuildServiceRoleArn are required.")
 
-            response_body = json.dumps(response)
-            headers = {'Content-Type': 'application/json', "content-length": str(len(response_body)) }
-            put_response = http.request('PUT',
-                          event['ResponseURL'],
-                          body = response_body,
-                          headers=headers)
-            return response
+                      data = update_kubectl_role_trust(
+                          kubectl_role_name=kubectl_role_name,
+                          codebuild_service_role_arn=codebuild_service_role_arn,
+                      )
+
+                      if request_type == "Update":
+                          data["Message"] = "Kubectl role trust policy updated successfully on stack update."
+
+                      send_cfn_response(
+                          event=event,
+                          context=context,
+                          status="SUCCESS",
+                          data=data,
+                          physical_resource_id=physical_resource_id,
+                      )
+
+                  elif request_type == "Delete":
+                      send_cfn_response(
+                          event=event,
+                          context=context,
+                          status="SUCCESS",
+                          data={"Message": "Delete request received. No action taken."},
+                          physical_resource_id=physical_resource_id,
+                      )
+
+                  else:
+                      raise ValueError(f"Unsupported RequestType: {request_type}")
+
+                  return {
+                      "statusCode": 200,
+                      "body": json.dumps({"message": "Custom resource processed successfully."}),
+                  }
+
+              except Exception as exc:
+                  logger.exception("Failed to process custom resource event")
+
+                  send_cfn_response(
+                      event=event,
+                      context=context,
+                      status="FAILED",
+                      data={"Message": "Resource operation failed."},
+                      reason=str(exc),
+                      physical_resource_id=physical_resource_id,
+                  )
+
+                  return {
+                      "statusCode": 500,
+                      "body": json.dumps({"message": str(exc)}),
+                  }
 
       Handler: index.handler
       Role: !GetAtt CustomResourceLambdaExecutionRole.Arn
-      Runtime: python3.9
-      Timeout: 300
+      Runtime: python3.14
+      Timeout: 120
 
   CustomResourceLambdaExecutionRole:
     Type: AWS::IAM::Role
@@ -200,9 +304,6 @@ Resources:
       ServiceToken: !GetAtt CustomResourceLambda.Arn
       KubectlRoleName: !Ref KubectlRoleName
       CodeBuildServiceRoleArn: !GetAtt CodeBuildServiceRole.Arn
-    DependsOn:
-      - CustomResourceLambda
-      - CodeBuildServiceRole
 
   CodePipelineServiceRole:
     Type: AWS::IAM::Role
@@ -238,7 +339,6 @@ Resources:
                   - s3:GetObject
                   - s3:GetObjectVersion
                   - s3:GetBucketVersioning
-    DependsOn: CodePipelineArtifactBucket
 
   CodeBuildServiceRole:
     Type: AWS::IAM::Role
@@ -260,25 +360,25 @@ Resources:
                 Effect: Allow
                 Action:
                   - sts:AssumeRole
-              - Resource: '*'
+              - Resource: "*"
                 Effect: Allow
                 Action:
                   - eks:Describe*
-              - Resource: '*'
+              - Resource: "*"
                 Effect: Allow
                 Action:
                   - ssm:GetParameters
-              - Resource: '*'
+              - Resource: "*"
                 Effect: Allow
                 Action:
                   - logs:CreateLogGroup
                   - logs:CreateLogStream
                   - logs:PutLogEvents
-              - Resource: '*'
+              - Resource: "*"
                 Effect: Allow
                 Action:
                   - ecr:GetAuthorizationToken
-              - Resource: '*'
+              - Resource: "*"
                 Effect: Allow
                 Action:
                   - ec2:CreateNetworkInterface
@@ -372,4 +472,3 @@ Resources:
               OutputArtifacts:
                 - Name: BuildOutput
               RunOrder: 1
-    DependsOn: CodeBuildProject

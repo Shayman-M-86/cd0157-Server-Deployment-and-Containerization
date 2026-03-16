@@ -1,0 +1,76 @@
+---
+version: 0.2
+
+env:
+  shell: bash
+
+phases:
+  install:
+    runtime-versions:
+      python: 3.12
+    commands:
+      - set -euo pipefail
+      - echo "Starting install phase"
+
+      # Required if your CodeBuild project uses Docker builds.
+      # Also make sure PrivilegedMode=true on the CodeBuild project itself.
+      - nohup /usr/local/bin/dockerd --host=unix:///var/run/docker.sock --host=tcp://127.0.0.1:2375 --storage-driver=overlay2 &
+      - timeout 30 sh -c "until docker info; do echo waiting for docker; sleep 1; done"
+
+      - python --version
+      - aws --version
+
+      # kubectl should be within one minor version of the EKS control plane.
+      # For your 1.34 cluster, use a 1.34 kubectl.
+      - curl -LO "https://dl.k8s.io/release/v1.34.0/bin/linux/amd64/kubectl"
+      - curl -LO "https://dl.k8s.io/release/v1.34.0/bin/linux/amd64/kubectl.sha256"
+      - echo "$(cat kubectl.sha256)  kubectl" | sha256sum --check
+      - chmod +x kubectl
+      - mv kubectl /usr/local/bin/kubectl
+      - kubectl version --client
+
+      - 'command -v dnf && dnf install -y jq || yum install -y jq'
+
+  pre_build:
+    commands:
+      - 'set -euo pipefail'
+      - 'echo "Starting pre_build phase"'
+      - 'export TAG="${REPOSITORY_NAME}.${REPOSITORY_BRANCH}.${ENVIRONMENT_NAME}.$(date +%Y-%m-%d.%H.%M.%S).${CODEBUILD_RESOLVED_SOURCE_VERSION:0:8}"'
+      - 'echo "Image tag: $TAG"'
+
+      - test -n "${AWS_DEFAULT_REGION:-}"
+      - test -n "${REPOSITORY_URI:-}"
+      - test -n "${EKS_CLUSTER_NAME:-}"
+      - test -n "${EKS_KUBECTL_ROLE_ARN:-}"
+
+      - 'pwd'
+      - 'find . -maxdepth 3 -type f | sort'
+      - 'test -f cloud/deployment.yml'
+      - 'sed -i "s@CONTAINER_IMAGE@${REPOSITORY_URI}:${TAG}@g" cloud/deployment.yml'
+
+      - aws ecr get-login-password --region "$AWS_DEFAULT_REGION" | docker login --username AWS --password-stdin "$(echo "$REPOSITORY_URI" | cut -d/ -f1)"
+
+      - mkdir -p "$HOME/.kube"
+      - export KUBECONFIG="$HOME/.kube/config"
+      - aws eks update-kubeconfig --region "$AWS_DEFAULT_REGION" --name "$EKS_CLUSTER_NAME" --role-arn "$EKS_KUBECTL_ROLE_ARN"
+
+      - kubectl get nodes
+      - ls -la
+
+  build:
+    commands:
+      - set -euo pipefail
+      - echo "Starting build phase"
+      - docker build --tag "${REPOSITORY_URI}:${TAG}" .
+
+  post_build:
+    commands:
+      - 'set -euo pipefail'
+      - 'docker push "${REPOSITORY_URI}:${TAG}"'
+      - 'kubectl apply -f cloud/deployment.yml'
+      - 'kubectl rollout status deployment/simple-jwt-api --timeout=300s'
+      - 'printf ''[{"name":"simple-jwt-api","imageUri":"%s"}]'' "${REPOSITORY_URI}:${TAG}" > build.json'
+
+artifacts:
+  files:
+    - build.json

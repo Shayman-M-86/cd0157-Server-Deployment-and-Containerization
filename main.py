@@ -44,13 +44,13 @@ def require_jwt(function):
     """
     @functools.wraps(function)
     def decorated_function(*args, **kws):
-        if not 'Authorization' in request.headers:
+        if 'Authorization' not in request.headers:
             abort(401)
-        data = request.headers['Authorization']
-        token = str.replace(str(data), 'Bearer ', '')
+        data: str = request.headers['Authorization']
+        token: str = str.replace(data, 'Bearer ', '')
         try:
             jwt.decode(token, JWT_SECRET, algorithms=['HS256'])
-        except: # pylint: disable=bare-except
+        except Exception:
             abort(401)
 
         return function(*args, **kws)
@@ -68,8 +68,8 @@ def auth():
     Create JWT token based on email.
     """
     request_data = request.get_json()
-    email = request_data.get('email')
-    password = request_data.get('password')
+    email: str = request_data.get('email')
+    password: str = request_data.get('password')
     if not email:
         LOG.error("No email provided")
         return jsonify({"message": "Missing parameter: email"}, 400)
@@ -80,7 +80,7 @@ def auth():
 
     user_data = body
 
-    return jsonify(token=_get_jwt(user_data).decode('utf-8'))
+    return jsonify(token=_get_jwt(user_data))
 
 
 @APP.route('/contents', methods=['GET'])
@@ -88,13 +88,13 @@ def decode_jwt():
     """
     Check user token and return non-secret data
     """
-    if not 'Authorization' in request.headers:
+    if 'Authorization' not in request.headers:
         abort(401)
     data = request.headers['Authorization']
     token = str.replace(str(data), 'Bearer ', '')
     try:
         data = jwt.decode(token, JWT_SECRET, algorithms=['HS256'])
-    except: # pylint: disable=bare-except
+    except Exception:
         abort(401)
 
 
@@ -104,10 +104,10 @@ def decode_jwt():
     return jsonify(**response)
 
 
-def _get_jwt(user_data):
-    exp_time = datetime.datetime.utcnow() + datetime.timedelta(weeks=2)
+def _get_jwt(user_data: dict) -> str:
+    exp_time = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(weeks=2)
     payload = {'exp': exp_time,
-               'nbf': datetime.datetime.utcnow(),
+               'nbf': datetime.datetime.now(datetime.timezone.utc),
                'email': user_data['email']}
     return jwt.encode(payload, JWT_SECRET, algorithm='HS256')
 

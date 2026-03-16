@@ -1,14 +1,27 @@
-# Use the `python:3.9` as a source image from the Amazon ECR Public Gallery
-# We are not using `python:3.7.2-slim` from Dockerhub because it has put a  pull rate limit.
-FROM public.ecr.aws/sam/build-python3.9:latest
+# Build command:
+#   docker build -f Docker/Dockerfile -t kubernetes-testing:latest .
 
-# Set up an app directory for your code
+FROM python:3.14-slim-trixie
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    HOST=0.0.0.0 \
+    PORT=8080 \
+    WEB_CONCURRENCY=2 \
+    TIMEOUT=60 
+
+
+# Install runtime dependencies.
 COPY . /app
+
 WORKDIR /app
 
-# Install `pip` and needed Python packages from `requirements.txt`
-RUN pip install --upgrade pip
-RUN pip install -r requirements.txt
+RUN uv sync --frozen --no-dev
 
-# Define an entrypoint which will run the main app using the Gunicorn WSGI server.
-ENTRYPOINT ["gunicorn", "-b", ":8080", "main:APP"]
+# Copy application source.
+
+EXPOSE 8080
+
+CMD ["bash", "scripts/run.sh"]
