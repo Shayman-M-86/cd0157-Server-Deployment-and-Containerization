@@ -1,7 +1,7 @@
 # Build command:
 #   docker build -f Docker/Dockerfile -t kubernetes-testing:latest .
 
-FROM python:3.8-stretch
+FROM python:3.14-slim-trixie
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
