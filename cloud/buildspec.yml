@@ -3,6 +3,8 @@ version: 0.2
 
 env:
   shell: bash
+  parameter-store:
+    JWT_SECRET: JWT_SECRET
 
 phases:
   install:
@@ -12,16 +14,16 @@ phases:
       - set -euo pipefail
       - echo "Starting install phase"
 
-      # Required if your CodeBuild project uses Docker builds.
-      # Also make sure PrivilegedMode=true on the CodeBuild project itself.
       - nohup /usr/local/bin/dockerd --host=unix:///var/run/docker.sock --host=tcp://127.0.0.1:2375 --storage-driver=overlay2 &
       - timeout 30 sh -c "until docker info; do echo waiting for docker; sleep 1; done"
 
       - python --version
       - aws --version
 
-      # kubectl should be within one minor version of the EKS control plane.
-      # For your 1.34 cluster, use a 1.34 kubectl.
+      - curl -LsSf https://astral.sh/uv/install.sh | sh
+      - export PATH="$HOME/.local/bin:$PATH"
+      - uv --version
+
       - curl -LO "https://dl.k8s.io/release/v1.34.0/bin/linux/amd64/kubectl"
       - curl -LO "https://dl.k8s.io/release/v1.34.0/bin/linux/amd64/kubectl.sha256"
       - echo "$(cat kubectl.sha256)  kubectl" | sha256sum --check
@@ -35,6 +37,11 @@ phases:
     commands:
       - 'set -euo pipefail'
       - 'echo "Starting pre_build phase"'
+      - 'export PATH="$HOME/.local/bin:$PATH"'
+
+      - uv sync --frozen --dev
+      - uv run pytest -W ignore
+
       - 'export TAG="${REPOSITORY_NAME}.${REPOSITORY_BRANCH}.${ENVIRONMENT_NAME}.$(date +%Y-%m-%d.%H.%M.%S).${CODEBUILD_RESOLVED_SOURCE_VERSION:0:8}"'
       - 'echo "Image tag: $TAG"'
 

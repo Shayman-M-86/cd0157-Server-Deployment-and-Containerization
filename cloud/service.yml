@@ -1,11 +1,11 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: simple-jwt-api-LoadBalancer
+  name: simple-jwt-api
 spec:
   type: LoadBalancer
   selector:
-    app: kubernetes-testing
+    app: simple-jwt-api
   ports:
     - protocol: TCP
       port: 80
