@@ -413,6 +413,7 @@ Resources:
         Type: CODEPIPELINE
       Source:
         Type: CODEPIPELINE
+        BuildSpec: cloud/buildspec.yml
       Environment:
         ComputeType: BUILD_GENERAL1_SMALL
         Type: LINUX_CONTAINER
